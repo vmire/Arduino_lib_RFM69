@@ -1,8 +1,8 @@
 // **********************************************************************************
-// Driver definition for HopeRF RFM69W/RFM69HW/RFM69CW/RFM69HCW, Semtech SX1231/1231H
+// Arduino library for HopeRF RFM69(W/HW/CW/HCW), Semtech SX1231/1231H
 // **********************************************************************************
-// Copyright Felix Rusu (2014), felix@lowpowerlab.com
-// http://lowpowerlab.com/
+// forked from http://lowpowerlab.com, Felix Rusu (2014), felix@lowpowerlab.com
+// 
 // **********************************************************************************
 // License
 // **********************************************************************************
@@ -34,7 +34,6 @@
 #include <Arduino.h>            //assumes Arduino IDE v1.0 or greater
 
 #define RF69_MAX_DATA_LEN         61 // to take advantage of the built in AES/CRC we want to limit the frame size to the internal FIFO size (66 bytes - 3 bytes overhead)
-#define RF69_SPI_CS               SS // SS is the SPI slave select pin, for instance D10 on atmega328
 
 // INT0 on AVRs should be connected to RFM69's DIO0 (ex on Atmega328 it's D2, on Atmega644/1284 it's D2)
 #if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__) || defined(__AVR_ATmega88) || defined(__AVR_ATmega8__) || defined(__AVR_ATmega88__)
@@ -50,7 +49,7 @@
 #define	RF69_MODE_STANDBY     1 // XTAL ON
 #define RF69_MODE_SYNTH	      2 // PLL ON
 #define RF69_MODE_RX          3 // RX MODE
-#define RF69_MODE_TX		      4 // TX MODE
+#define RF69_MODE_TX		  4 // TX MODE
 
 //available frequency bands
 #define RF69_315MHZ     31  // non trivial values to avoid misconfiguration
@@ -63,21 +62,24 @@
 #define RF69_BROADCAST_ADDR 255
 #define RF69_CSMA_LIMIT_MS 1000
 
+#define ENROLL_NODE_ID 5   //Numéro de noeud réservé à l'enrollement des noeuds
+
 class RFM69 {
   public:
-    static volatile byte DATA[RF69_MAX_DATA_LEN];          // recv/xmit buf, including hdr & crc bytes
+    static volatile byte DATA[RF69_MAX_DATA_LEN];	// recv/xmit buf, including hdr & crc bytes
     static volatile byte DATALEN;
     static volatile byte SENDERID;
-    static volatile byte TARGETID; //should match _address
+    static volatile byte TARGETID;					//should match _address
     static volatile byte PAYLOADLEN;
     static volatile byte ACK_REQUESTED;
-    static volatile byte ACK_RECEIVED; /// Should be polled immediately after sending a packet with ACK request
-    static volatile int RSSI; //most accurate RSSI during reception (closest to the reception)
-    static volatile byte _mode; //should be protected?
+    static volatile byte ACK_RECEIVED;				// Should be polled immediately after sending a packet with ACK request
+    static volatile int RSSI;						//most accurate RSSI during reception (closest to the reception)
+    static volatile byte _mode;						//should be protected?
     static volatile boolean dataReceived;	
     
-    RFM69(byte slaveSelectPin=RF69_SPI_CS, byte interruptPin=RF69_IRQ_PIN, bool isRFM69HW=false, byte interruptNum=RF69_IRQ_NUM) {
-      _slaveSelectPin = slaveSelectPin;
+    RFM69(byte freqBand, byte slaveSelectPin, byte interruptPin=RF69_IRQ_PIN, byte interruptNum=RF69_IRQ_NUM, bool isRFM69HW=false) {
+      _frequencyBand = freqBand;
+	  _slaveSelectPin = slaveSelectPin;
       _interruptPin = interruptPin;
       _interruptNum = interruptNum;
       _mode = RF69_MODE_STANDBY;
@@ -86,7 +88,10 @@ class RFM69 {
       _isRFM69HW = isRFM69HW;
     }
 
-    bool initialize(byte freqBand, byte ID, byte networkID=1);
+    bool initialize(byte nodeId, byte networkId=1);
+	byte enrollNode(byte networkId, byte gatewayId, unsigned int nodeId_eeprom_addr, byte retries=3, byte retryWaitTime=500);
+	void setDebug(boolean d=true);
+	
     void setAddress(byte addr);
     bool canSend();
     void send(byte toAddress, const void* buffer, byte bufferSize, bool requestACK=false);
@@ -106,12 +111,12 @@ class RFM69 {
     byte readTemperature(byte calFactor=0); //get CMOS temperature (8bit)
     void rcCalibration(); //calibrate the internal RC oscillator for use in wide temperature variations - see datasheet section [4.3.5. RC Timer Accuracy]
 
-    // allow hacking registers by making these public
-    byte readReg(byte addr);
+	
+  protected:
+	byte readReg(byte addr);
     void writeReg(byte addr, byte val);
     void readAllRegs();
-
-  protected:
+	
     static void isr0();
     void virtual interruptHandler();
     void sendFrame(byte toAddress, const void* buffer, byte size, bool requestACK=false, bool sendACK=false);
@@ -126,13 +131,16 @@ class RFM69 {
     bool _isRFM69HW;
     byte _SPCR;
     byte _SPSR;
-
+	byte _frequencyBand;	//valeurs : RF69_433MHZ, RF69_868MHZ, RF69_915MHZ
+	boolean _debug;
+	
     void receiveBegin();
     void readReceivedData();
     void setMode(byte mode);
     void setHighPowerRegs(bool onOff);
     void select();
     void unselect();
+	
 };
 
 #endif
