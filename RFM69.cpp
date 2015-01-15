@@ -310,7 +310,7 @@ bool RFM69::ACKRequested() {
 	return ACK_REQUESTED && (TARGETID != RF69_BROADCAST_ADDR);
 }
 
-/// Should be called immediately after reception in case sender wants ACK
+// Should be called immediately after reception in case sender wants ACK
 void RFM69::sendACK(const void* buffer, byte bufferSize) {
 	byte sender = SENDERID;
 	while (!canSend()) receiveDone();
@@ -323,19 +323,19 @@ void RFM69::sendFrame(byte toAddress, const void* buffer, byte bufferSize, bool 
 	writeReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_00); // DIO0 is "Packet Sent"
 	if (bufferSize > RF69_MAX_DATA_LEN) bufferSize = RF69_MAX_DATA_LEN;
 
+	byte ackByte = 0x00;
+	if (sendACK) ackByte = 0x80;
+	else if (requestACK) ackByte = 0x40;
+	
+	
 	//write to FIFO
 	select();
 	SPI.transfer(REG_FIFO | 0x80);
-	SPI.transfer(bufferSize + 3);
-	SPI.transfer(toAddress);
-	SPI.transfer(_address);
+	SPI.transfer(bufferSize + 3);		//Payload length = toAddress byte + ack byte + buffer length
+	SPI.transfer(toAddress);			//Destinataire address
+	SPI.transfer(_address);				//Source address
+	SPI.transfer(ackByte);				//Ack byte
 	
-	//control byte
-	if (sendACK)
-		SPI.transfer(0x80);
-	else if (requestACK)
-		SPI.transfer(0x40);
-	else SPI.transfer(0x00);
 	
 	for (byte i = 0; i < bufferSize; i++)
 		SPI.transfer(((byte*)buffer)[i]);
