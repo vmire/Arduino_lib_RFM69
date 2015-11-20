@@ -22,8 +22,10 @@ sendWithRetry	KEYWORD2
 receiveDone	KEYWORD2
 ACKReceived	KEYWORD2
 sendACK	KEYWORD2
+receiveDone	KEYWORD2
 setFrequency	KEYWORD2
-encrypt	KEYWORD2
+setEncrypt	KEYWORD2
+enrollNode	KEYWORD2
 setCS	KEYWORD2
 readRSSI	KEYWORD2
 promiscuous	KEYWORD2

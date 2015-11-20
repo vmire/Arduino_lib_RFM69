@@ -36,7 +36,7 @@
 
 volatile byte RFM69::DATA[RF69_MAX_DATA_LEN];
 volatile byte RFM69::_mode;			 // current transceiver state
-volatile byte RFM69::dataReceived;
+volatile boolean RFM69::dataReceived;
 volatile byte RFM69::DATALEN;
 volatile byte RFM69::SENDERID;
 volatile byte RFM69::TARGETID; //should match _address
@@ -46,7 +46,7 @@ volatile byte RFM69::ACK_RECEIVED; /// Should be polled immediately after sendin
 volatile int RFM69::RSSI; //most accurate RSSI during reception (closest to the reception)
 RFM69* RFM69::selfPointer;
 
-bool RFM69::initialize(byte nodeId, byte networkId){
+bool RFM69::initialize(byte nodeId, byte networkId, char* encryptKey){
 	if(_debug){
 		Serial.print(F("RFM69 init : nodeId=")); Serial.print(nodeId); Serial.print(F(" networdId=")); Serial.println(networkId);
 	}
@@ -102,8 +102,7 @@ bool RFM69::initialize(byte nodeId, byte networkId){
 		writeReg(CONFIG[i][0], CONFIG[i][1]);
 
 	// Encryption is persistent between resets and can trip you up during debugging.
-	// Disable it during initialization so we always start from a known state.
-	encrypt(0);
+	setEncrypt(encryptKey);
 
 	setHighPower(_isRFM69HW); //called regardless if it's a RFM69W or RFM69HW
 	setMode(RF69_MODE_STANDBY);
@@ -132,19 +131,21 @@ void RFM69::setDebug(boolean d){
  * @param networkId
  * @param gatewayId : nodeId de la gateway référente
  * @param nodeId_eeprom_addr : Adresse de conservation du nodeId dans l'EEPROM
- * @return nodeId affecté (0 si échec)
+ * @return nodeId affecté. 0 ou 255 si échec
  */
-byte RFM69::enrollNode(byte networkId, byte gatewayId, unsigned int nodeId_eeprom_addr, byte retries, byte retryWaitTime){
-	if(_debug) Serial.print(F("enrollNode()"));
+byte RFM69::enrollNode(byte networkId, byte gatewayId, unsigned int nodeId_eeprom_addr, char* encryptKey, byte retries, byte retryWaitTime){
+	if(_debug) Serial.println(F("enrollNode()"));
 	
 	byte nodeId = EEPROM.read(nodeId_eeprom_addr);
-	if(nodeId >=10 || nodeId<255) return nodeId;	//Déjà enrollé
+	if(_debug) Serial.print("EEPROM nodeId:"); Serial.println(nodeId);
+	if(nodeId >=10 && nodeId<255) return nodeId;	//Déjà enrollé
 
 	Serial.println(F("Enrollement du noeud"));
 	nodeId = ENROLL_NODE_ID;
 	
 	//Initialisation RFM
 	initialize(nodeId,networkId);
+	setEncrypt(encryptKey);
 	
 	//Envoi de la trame
 	char* payload = "E";
@@ -269,7 +270,9 @@ bool RFM69::canSend(){
 void RFM69::send(byte toAddress, const void* buffer, byte bufferSize, bool requestACK){
 	writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFB) | RF_PACKET2_RXRESTART); // avoid RX deadlocks
 	long now = millis();
-	while (!canSend() && millis()-now < RF69_CSMA_LIMIT_MS) receiveDone();
+	while (!canSend() && millis()-now < RF69_CSMA_LIMIT_MS){
+		receiveDone();
+	}
 	sendFrame(toAddress, buffer, bufferSize, requestACK, false);
 }
 
@@ -289,11 +292,11 @@ bool RFM69::sendWithRetry(byte toAddress, const void* buffer, byte bufferSize, b
 		{
 			if (ACKReceived(toAddress))
 			{
-				//Serial.print(" ~ms:");Serial.print(millis()-sentTime);
+				if(_debug) Serial.print(" ~ms:");Serial.print(millis()-sentTime);
 				return true;
 			}
 		}
-		//Serial.print(" RETRY#");Serial.println(i+1);
+		if(_debug){ Serial.print(" No ack received in "); Serial.print(retryWaitTime); Serial.print("ms RETRY ");Serial.println(i+1); }
 	}
 	return false;
 }
@@ -318,6 +321,12 @@ void RFM69::sendACK(const void* buffer, byte bufferSize) {
 }
 
 void RFM69::sendFrame(byte toAddress, const void* buffer, byte bufferSize, bool requestACK, bool sendACK){
+	if(_debug){
+		Serial.print("sendFrame: "); Serial.write((char*)buffer,bufferSize);
+		if(requestACK) Serial.print(", request ack");
+		if(sendACK) Serial.print(", send ack");
+		Serial.println();
+	}
 	setMode(RF69_MODE_STANDBY); //turn off receiver to prevent reception while filling fifo
 	while ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // Wait for ModeReady
 	writeReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_00); // DIO0 is "Packet Sent"
@@ -326,7 +335,6 @@ void RFM69::sendFrame(byte toAddress, const void* buffer, byte bufferSize, bool 
 	byte ackByte = 0x00;
 	if (sendACK) ackByte = 0x80;
 	else if (requestACK) ackByte = 0x40;
-	
 	
 	//write to FIFO
 	select();
@@ -337,13 +345,17 @@ void RFM69::sendFrame(byte toAddress, const void* buffer, byte bufferSize, bool 
 	SPI.transfer(ackByte);				//Ack byte
 	
 	
-	for (byte i = 0; i < bufferSize; i++)
-		SPI.transfer(((byte*)buffer)[i]);
+	for (byte i = 0; i < bufferSize; i++){
+		SPI.transfer(((uint8_t*)buffer)[i]);
+		Serial.print(((char*)buffer)[i]);
+	}
 	unselect();
 
 	/* no need to wait for transmit mode to be ready since its handled by the radio */
 	setMode(RF69_MODE_TX);
-	while (digitalRead(_interruptPin) == 0); //wait for DIO0 to turn HIGH signalling transmission finish
+	uint32_t txStart = millis();
+	while (digitalRead(_interruptPin) == 0 && millis() - txStart < RF69_TX_LIMIT_MS); //wait for DIO0 to turn HIGH signalling transmission finish
+	//Si le RFM n'est pas présent, on sort sur timeout
 	//while (readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PACKETSENT == 0x00); // Wait for ModeReady
 	setMode(RF69_MODE_STANDBY);
 }
@@ -432,7 +444,7 @@ bool RFM69::receiveDone() {
 // To enable encryption: radio.encrypt("ABCDEFGHIJKLMNOP");
 // To disable encryption: radio.encrypt(null) or radio.encrypt(0)
 // KEY HAS TO BE 16 bytes !!!
-void RFM69::encrypt(const char* key) {
+void RFM69::setEncrypt(const char* key) {
 	setMode(RF69_MODE_STANDBY);
 	if (key!=0)
 	{
