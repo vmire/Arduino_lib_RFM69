@@ -347,7 +347,6 @@ void RFM69::sendFrame(byte toAddress, const void* buffer, byte bufferSize, bool 
 	
 	for (byte i = 0; i < bufferSize; i++){
 		SPI.transfer(((uint8_t*)buffer)[i]);
-		Serial.print(((char*)buffer)[i]);
 	}
 	unselect();
 
