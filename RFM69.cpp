@@ -137,16 +137,17 @@ byte RFM69::enrollNode(byte networkId, byte gatewayId, unsigned int nodeId_eepro
 	if(_debug) Serial.println(F("enrollNode()"));
 	
 	byte nodeId = EEPROM.read(nodeId_eeprom_addr);
-	if(_debug) Serial.print("EEPROM nodeId:"); Serial.println(nodeId);
+	if(_debug){ Serial.print(F("EEPROM nodeId:")); Serial.println(nodeId); }
 	if(nodeId >=10 && nodeId<255) return nodeId;	//Déjà enrollé
 
 	Serial.println(F("Enrollement du noeud"));
 	nodeId = ENROLL_NODE_ID;
 	
 	//Initialisation RFM
-	initialize(nodeId,networkId);
-	setEncrypt(encryptKey);
-	
+	initialize(nodeId,networkId,encryptKey);
+	sleep();
+	delay(10);
+
 	//Envoi de la trame
 	char* payload = "E";
 	if(sendWithRetry(gatewayId, payload, strlen(payload), retries, retryWaitTime)){
@@ -259,7 +260,7 @@ void RFM69::setPowerLevel(byte powerLevel){
 }
 
 bool RFM69::canSend(){
-	if (_mode == RF69_MODE_RX && PAYLOADLEN == 0 && readRSSI() < CSMA_LIMIT) //if signal stronger than -100dBm is detected assume channel activity
+	if (_mode == RF69_MODE_RX && PAYLOADLEN == 0 && readRSSI() < CSMA_LIMIT) // if signal stronger than -100dBm is detected assume channel activity
 	{
 		setMode(RF69_MODE_STANDBY);
 		return true;
@@ -292,7 +293,7 @@ bool RFM69::sendWithRetry(byte toAddress, const void* buffer, byte bufferSize, b
 		{
 			if (ACKReceived(toAddress))
 			{
-				if(_debug) Serial.print(" ~ms:");Serial.print(millis()-sentTime);
+				//if(_debug) Serial.print(" ~ms:");Serial.print(millis()-sentTime);
 				return true;
 			}
 		}
@@ -322,9 +323,9 @@ void RFM69::sendACK(const void* buffer, byte bufferSize) {
 
 void RFM69::sendFrame(byte toAddress, const void* buffer, byte bufferSize, bool requestACK, bool sendACK){
 	if(_debug){
-		Serial.print("sendFrame: "); Serial.write((char*)buffer,bufferSize);
-		if(requestACK) Serial.print(", request ack");
-		if(sendACK) Serial.print(", send ack");
+		Serial.print(F("sendFrame to ")); Serial.print(toAddress); Serial.print(":"); Serial.write((char*)buffer,bufferSize);
+		if(requestACK) Serial.print(F(" ack request"));
+		if(sendACK) Serial.print(F(" ack"));
 		Serial.println();
 	}
 	setMode(RF69_MODE_STANDBY); //turn off receiver to prevent reception while filling fifo
@@ -333,8 +334,8 @@ void RFM69::sendFrame(byte toAddress, const void* buffer, byte bufferSize, bool 
 	if (bufferSize > RF69_MAX_DATA_LEN) bufferSize = RF69_MAX_DATA_LEN;
 
 	byte ackByte = 0x00;
-	if (sendACK) ackByte = 0x80;
-	else if (requestACK) ackByte = 0x40;
+	if (sendACK) ackByte = ackByte | 0x80;
+	else if (requestACK) ackByte = ackByte | 0x40;
 	
 	//write to FIFO
 	select();
@@ -403,7 +404,6 @@ void RFM69::readReceivedData(){
 
 		ACK_RECEIVED = CTLbyte & 0x80; //extract ACK-requested flag
 		ACK_REQUESTED = CTLbyte & 0x40; //extract ACK-received flag
-
 		for (byte i= 0; i < DATALEN; i++)
 		{
 			DATA[i] = SPI.transfer(0);
@@ -420,7 +420,7 @@ void RFM69::readReceivedData(){
 bool RFM69::receiveDone() {
 // ATOMIC_BLOCK(ATOMIC_FORCEON)
 // {
-	noInterrupts(); //re-enabled in unselect() via setMode() or via receiveBegin()
+	//noInterrupts(); //re-enabled in unselect() via setMode() or via receiveBegin()
 	
 	if(dataReceived) 
 		readReceivedData();
